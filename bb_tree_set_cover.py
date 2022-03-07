@@ -27,21 +27,6 @@ class BBTree():
         node = min(heap, key=attrgetter('LB'))
         return node
 
-    def branch(self, model):
-        # 循环中已经判断了该问题的最优解不是整数，所以才会进入分枝
-        # 从 v_{t|\tau} 中找最小的 t，满足其中有元素不是整数，按照这个元素分成两个集合
-        # 根据两个集合构造相应的节点，需要 变量，01变量，目标函数，约束，上界，下界
-        # 此时传进来的 model 是优化结束的 model，要拿到它的 solution，为 children 构造初始解， 同时构造下界
-
-        children = []
-        # 1. 找到要分枝的变量 v_{t | \tau}
-        #
-        for b in [0,1]:
-            # 先按照新建节点试试，不行就再使用 deepcopy 复制父节点
-            n1 = BBTreeNode
-            children.append(n1)
-        return children
-
     def bbtreeSolve(self):
         # 堆 heap 是用来控制循环的机制，heap 不为空意味着还有可以进行分枝的节点，算法仍要继续
         # 但是 heap 为空意味着所有的节点都被剪枝剪掉了，不需要
@@ -54,6 +39,7 @@ class BBTree():
         # Q: 需要更新B&B树上界和最新节点吗？
         nodecount = 0
         while len(heap) > 0: # 这个循环是边界 frontier 迭代的循环，第0次，frontier就是根节点
+            print('-----------  ', nodecount, '  -----------')
             # 用 len(heap) 作为循环条件的缺点——每次求解bb树都要求解完，而不是中途求到feasible的解也可以退出
             nodecount += 1
             print("Heap Size: ", len(heap))
@@ -73,7 +59,7 @@ class BBTree():
                     node.LB = res
                     pass
                 elif node.isIntegral(prob): # solution update
-                    print("New Best Integral solution.")
+                    print("New Best Integral solution. Optimal = " ,res)
                     self.treeUB = res
                     node.LB = res
                     self.bestnode = node
@@ -82,8 +68,10 @@ class BBTree():
                     newnodes = node.branch(model=prob)
                     self.frontier.remove(node)
                     for newnode in newnodes:
-                        heappush(self.frontier, newnode)
-                        heappush(heap, newnode)
+                        self.frontier.append(newnode)
+                        heap.append(newnode)
+                        # heappush(self.frontier, newnode)
+                        # heappush(heap, newnode)
         print("Nodes searched: ", nodecount)
         return self.treeUB, self.bestnode, self.frontier
         # 每次求解完需要返回哪些东西传给下一个B&B树？
@@ -92,19 +80,21 @@ class BBTree():
 
 class BBTreeNode():
     def __init__(self, vars=set(), bool_vars=None, objective=0, constraints=[], UB=float('inf'),
-                 LB=-float('inf'), v_underline=[], v_bar=[]):
+                 LB=-float('inf'),horizon_is_1=True, v_underline=[], v_bar=[]):
         self.vars = vars
         self.bool_vars = bool_vars
         self.objective = objective
         self.constraints = constraints
         self.UB = UB
         self.LB = LB
+        self.horizon_is_1 = horizon_is_1
         # v_underline 和 v_bar 就按一维数组来实现
         self.v_underline = v_underline
         self.v_bar = v_bar
         self.children = [] # Q: what is the use of children?
 
-    def buildProblem(self, x0,):
+    def buildProblem(self):
+    # def buildProblem(self, x0, ):
         # 所以这里实际要求的是原问题 P 的松弛问题 P(V) 的对偶问题 D(V)，实验证明对偶问题求解成功
         # Q: buildProblem 需要什么参数？
         # 如果满足强对偶性的要求，求解得到的 D(V) 的最优值和 P(V)的最优值，也就是节点的下界 node.LB
@@ -115,8 +105,8 @@ class BBTreeNode():
         # 参数需不需要移到class的外面？因为每次赋值都会占用一定的时间。
         prob_Q = np.identity(4)  # Q^TQ=Q
         # 初始状态需要作为参数吗？因为涉及到每个时间步时，具体的初始状态都是不一样的。
-        # prob_x0 = np.array([0.3, 0.4, 0.5, 0.6])
-        prob_x0 = x0
+        prob_x0 = np.array([0.3, 0.4, 0.5, 0.6])
+        # prob_x0 = x0
         prob_A = np.identity(4)
         prob_B = np.array([[0.1, 0.2, 0.3, 1, 0, 0, 0],
                            [0.1, 0.2, 0.3, 0, 1, 0, 0],
@@ -198,15 +188,61 @@ class BBTreeNode():
         # 2. 判断这些值是否为整数，如果为整数，is_Integral 置为 True
         return all([abs(v- 1) <= 1e-3 or abs(v - 0) <= 1e-3 for v in self.bool_vars])
 
+    def branch(self, model):
+        # 循环中已经判断了该问题的最优解不是整数，所以才会进入分枝
+        # 从 v_{t|\tau} 中找最小的 t，满足其中有元素不是整数，按照这个元素分成两个集合
+        # 根据两个集合构造相应的节点，需要 变量，01变量，目标函数，约束，上界，下界
+        # 此时传进来的 model 是优化结束的 model，要拿到它的 solution，为 children 构造初始解， 同时构造下界
+
+        # 1. self.bool_vars 中存的是一个矩阵，列表形式实现 [[v_{0 | \tau}], [v_{1 | \tau}], ..., v_{T-1 | \tau}]
+        # 找到具体要分枝的变量，列表形式实现 v_{t | \tau}， v_{t | \tau} 中有 mu 个元素，确定是哪一个，记作tbb。
+        # 2. 父节点中下界 v_undeline 中 tbb 置 1，与父节点中原上界配合成为新节点
+        # 3. 父节点中上界 v_bar 中 tbb 置 1， 与父节点中原下界配合成为新节点
+        # 4. 计算新节点的 下界。
+        bool_vars = np.array(self.bool_vars)
+        horizon_is_1 = self.horizon_is_1
+        # bool_vars = np.array([0.3, 0.19999999999999996, 0.09999999999999998, 0.0])
+        bool_vars[bool_vars<=1e-3] = 0
+        bool_vars[bool_vars>=1-1e-3] = 0
+        non_integral=np.nonzero(bool_vars)
+
+        children = []
+        if horizon_is_1: # T=1
+            non_integral_d = non_integral[0][0]
+            node1 = copy.deepcopy(self)
+            node1.v_bar[non_integral_d] = 0
+            # 下界还没求
+            node1.LB = 0
+            node2 = copy.deepcopy(self)
+            node2.v_underline[non_integral_d] = 1
+            node2.LB = 0
+            children.append(node1)
+            children.append(node2)
+            print('node1', node1.v_underline, node1.v_bar)
+            print('node2', node2.v_underline, node2.v_bar)
+
+        else: #T>1
+            non_integral_t, non_integral_d = non_integral[0][0], non_integral[1][0]
+
+
+
+
+        return children
+
+
+
+
 
 # 主代码
-# tree = BBTree()
-# tree.bbtreeSolve()
+frontier = []
 node = BBTreeNode(v_underline=np.array([0,0,0,0]), v_bar=np.array([1,1,1,1]))
-prob = node.buildProblem(x0=np.array([0.3, 0.4, 0.5, 0.6]), )
-prob.optimize()
-print('obj=', prob.objVal)
-print('is_Integral=', node.isIntegral(prob))
+frontier.append(node)
+tree = BBTree(root_nodes=frontier)
+tree.bbtreeSolve()
+# prob = node.buildProblem(x0=np.array([0.3, 0.4, 0.5, 0.6]), )
+# prob.optimize()
+# print('obj=', prob.objVal)
+# print('is_Integral=', node.isIntegral(prob))
 
 # for v in prob.getVars():
 #     print(v.varName, ':', v.x)
