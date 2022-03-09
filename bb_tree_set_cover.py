@@ -62,6 +62,7 @@ class BBTree():
                     print("New Best Integral solution. Optimal = " ,res)
                     self.treeUB = res
                     node.LB = res
+                    node.UB = res
                     self.bestnode = node
                 else: # branching
                     # 现在开始处理分支，争取2022/03/05 23:30前处理完
@@ -224,9 +225,6 @@ class BBTreeNode():
         else: #T>1
             non_integral_t, non_integral_d = non_integral[0][0], non_integral[1][0]
 
-
-
-
         return children
 
 
@@ -249,6 +247,9 @@ tree.bbtreeSolve()
 
 
 
+
+[0.0, -0.0, 0.0, -0.0, -0.0, -0.0, -0.0]
+[0.0, 2.9999999999999996, 0.0, -0.3, -0.19999999999999996, -0.09999999999999998, -0.0]
 
 
 
